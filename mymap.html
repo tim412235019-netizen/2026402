@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>嘉義市氣候情境監測 - 修正版</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        #map { height: 100vh; width: 100%; }
+        .controls { position: absolute; top: 10px; left: 50px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    </style>
+</head>
+<body>
+    <div class="controls"><button onclick="getLocation()">📍 確認我的 GPS 位置</button></div>
+    <div id="map"></div>
+
+    <script>
+        // 1. 定義底圖圖層
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+        });
+
+        var esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EBP, and the GIS User Community'
+        });
+
+            // 2. 初始化地圖 (預設使用衛星圖層 esri)
+            var map = L.map('map', {
+             center: [23.48, 120.45],
+                zoom: 13,
+                layers: [osm] // 預設進來先看衛星圖
+            });
+        // 2. 定義顏色比例尺 (暫定範圍，稍後會自動對齊)
+        var colorScaleHigh = d3.scaleSequential(d3.interpolateReds).domain([20, 50]);
+        var colorScaleLow = d3.scaleSequential(d3.interpolateBlues).domain([60, 80]);
+
+        // 3. 建立圖層容器
+        var highTempGroup = L.layerGroup().addTo(map);
+        var lowTempGroup = L.layerGroup();
+
+        /**
+         * 唯一渲染函式 (避免覆寫)
+         */
+        function processAndRender(data, fieldName, colorScale, group) {
+            console.log(`正在渲染圖層 [${fieldName}]...`);
+            
+            // 自動調整比例尺 Domain，確保顏色正確分布
+            const values = data.features.map(f => f.properties[fieldName]).filter(v => v != null);
+            if (values.length > 0) {
+                const minV = Math.min(...values);
+                const maxV = Math.max(...values);
+                colorScale.domain([minV, maxV]);
+                console.log(`${fieldName} 數值範圍: ${minV} ~ ${maxV}`);
+            }
+
+            L.geoJSON(data, {
+                style: function (feature) {
+                    var val = feature.properties[fieldName];
+                    return {
+                        fillColor: colorScale(val),
+                        weight: 1,
+                        opacity: 0.8,
+                        color: 'white',
+                        fillOpacity: 0.7
+                    };
+                },
+                onEachFeature: function (feature, layer) {
+                    layer.bindPopup(`<b>預測天數:</b> ${feature.properties[fieldName]} 天`);
+                }
+            }).addTo(group);
+        }
+
+        // 4. 載入高溫資料
+        fetch('HighTemp_ssp126_Short.geojson')
+            .then(res => res.json())
+            .then(data => {
+                processAndRender(data, 'temp_min', colorScaleHigh, highTempGroup);
+            })
+            .catch(err => console.error("高溫載入出錯:", err));
+
+        // 5. 載入低溫資料
+        fetch('LowTemp_ssp126_Short.geojson')
+            .then(res => res.json())
+            .then(data => {
+                processAndRender(data, 'temp_min', colorScaleLow, lowTempGroup);
+            })
+            .catch(err => console.error("低溫載入出錯:", err));
+
+        // 6. 載入邊界 (注意檔名空格可能造成問題，建議檢查檔名)
+        fetch('chiayi_boundary.geojson')
+            .then(res => res.json())
+            .then(data => {
+                L.geoJSON(data, {
+                    style: { color: "black", weight: 3, fill: false, pointerEvents: 'none' }
+                }).addTo(map);
+            })
+            .catch(err => console.error("邊界載入出錯:", err));
+
+        // 7. 圖層切換控制
+        var baseMaps = {
+                 "街道地圖": osm,
+                 "衛星影像": esri,
+                };
+
+            var overlayMaps = {
+                "ssp126高溫日數": highTempGroup,
+                "ssp126低溫日數": lowTempGroup
+                };
+
+L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
+        // GPS 功能
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(pos => {
+                    L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(map).bindPopup("你在這裡").openPopup();
+                    map.setView([pos.coords.latitude, pos.coords.longitude], 15);
+                });
+            }
+        }
+    </script>
+</body>
+</html>
